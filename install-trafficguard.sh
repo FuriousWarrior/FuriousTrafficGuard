@@ -1,9 +1,10 @@
 #!/bin/bash
-# 🔥 TrafficGuard PRO INSTALLER v11.0 (Firewall Safety & Management)
+# 🔥 TrafficGuard PRO INSTALLER v12.0 (Bugfix & Safety)
 # Описание:
-# - Проверка UFW перед установкой (защита от потери SSH).
-# - Команды: uninstall, update.
-# - Полное логирование установки.
+# 1. Исправлен Uninstall (сначала удаляет правила iptables, потом ipset).
+# 2. Исправлен Test Blocking (меню теперь вызывает функцию).
+# 3. Полный вывод логов (без /dev/null) для контроля UFW.
+# 4. Защита от потери SSH (проверка правил UFW).
 
 MANAGER_PATH="/opt/trafficguard-manager.sh"
 LINK_PATH="/usr/local/bin/rknpidor"
@@ -31,46 +32,50 @@ check_root() {
 check_firewall_safety() {
     echo -e "${BLUE}[CHECK] Проверка конфигурации Firewall...${NC}"
     
-    # 1. Проверка UFW
+    # Если UFW установлен
     if command -v ufw >/dev/null; then
         UFW_STATUS=$(ufw status | grep "Status" | awk '{print $2}')
-        # Получаем список добавленных правил (даже если ufw выключен)
+        # Смотрим добавленные правила
         UFW_RULES=$(ufw show added 2>/dev/null)
         
-        # Если UFW выключен И нет правил на 22 порт (SSH)
+        # ЛОГИКА: Если UFW выключен (inactive) И в правилах НЕТ SSH (22)
         if [[ "$UFW_STATUS" == "inactive" ]]; then
             if [[ "$UFW_RULES" != *"22"* ]] && [[ "$UFW_RULES" != *"SSH"* ]] && [[ "$UFW_RULES" != *"OpenSSH"* ]]; then
-                echo -e "\n${RED}⛔ ОПАСНОСТЬ БЛОКИРОВКИ SSH!${NC}"
-                echo -e "${YELLOW}Обнаружен UFW в статусе 'inactive' без правил для SSH.${NC}"
-                echo "Если продолжить, firewall может включиться и заблокировать ваш доступ к серверу."
+                echo -e "\n${RED}⛔ АВАРИЙНАЯ ОСТАНОВКА! РИСК ПОТЕРИ ДОСТУПА!${NC}"
+                echo -e "${YELLOW}У вас установлен UFW, но он выключен и в нем НЕТ правил для SSH.${NC}"
+                echo "TrafficGuard может активировать фаервол, и вы потеряете доступ к серверу."
                 echo ""
-                echo -e "РЕШЕНИЕ: Выполните команду: ${GREEN}ufw allow ssh${NC} и запустите установку снова."
+                echo -e "👉 РЕШЕНИЕ: Выполните команду: ${GREEN}ufw allow ssh${NC}"
+                echo "   Затем запустите установку снова."
                 echo ""
                 exit 1
             fi
         fi
-        echo -e "${GREEN}[OK] UFW корректен (или активен с правилами).${NC}"
+        echo -e "${GREEN}[OK] Конфигурация UFW безопасна.${NC}"
     else
-        # 2. Если UFW нет, проверяем iptables-persistent
+        # Если UFW нет, проверяем iptables-persistent
         echo -e "${YELLOW}[INFO] UFW не найден. Проверяем iptables-persistent...${NC}"
         if ! dpkg -l | grep -q netfilter-persistent; then
-            echo -e "${CYAN}Устанавливаем iptables-persistent (стандартное поведение)...${NC}"
-            apt-get update -qq && apt-get install -y iptables-persistent netfilter-persistent
+            echo -e "${CYAN}Устанавливаем iptables-persistent...${NC}"
+            # DEBIAN_FRONTEND=noninteractive чтобы не висело окно настройки
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent netfilter-persistent
         fi
     fi
 }
 
-# --- 🗑️ УДАЛЕНИЕ ---
+# --- 🗑️ УДАЛЕНИЕ (UNINSTALL FIX) ---
 uninstall_process() {
     echo -e "\n${RED}=== УДАЛЕНИЕ TRAFFICGUARD ===${NC}"
-    read -p "Вы уверены? (y/N): " confirm
+    echo "Это действие удалит скрипты, сервисы и сбросит правила блокировки."
+    read -p "Вы уверены? (y/N): " confirm < /dev/tty
     [[ "$confirm" != "y" ]] && return
 
-    echo "Остановка сервисов..."
+    echo "1. Остановка сервисов..."
     systemctl stop antiscan-aggregate.timer antiscan-aggregate.service 2>/dev/null
     systemctl disable antiscan-aggregate.timer antiscan-aggregate.service 2>/dev/null
     
-    echo "Удаление файлов..."
+    echo "2. Удаление файлов..."
     rm -f /usr/local/bin/traffic-guard
     rm -f /usr/local/bin/antiscan-aggregate-logs.sh
     rm -f /etc/systemd/system/antiscan-*
@@ -79,13 +84,21 @@ uninstall_process() {
     rm -f /usr/local/bin/rknpidor
     rm -f /opt/trafficguard-manager.sh
     
-    echo "Очистка правил..."
-    ipset destroy SCANNERS-BLOCK-V4 2>/dev/null
-    ipset destroy SCANNERS-BLOCK-V6 2>/dev/null
-    # Очищаем цепочки (упрощенно, полная чистка iptables может быть опасной, удаляем только ссылки)
+    echo "3. Очистка правил Firewall..."
+    # Сначала удаляем правило из iptables, иначе ipset не удалится (device busy)
     iptables -D INPUT -j SCANNERS-BLOCK 2>/dev/null
+    ip6tables -D INPUT -j SCANNERS-BLOCK 2>/dev/null
+    
     iptables -F SCANNERS-BLOCK 2>/dev/null
     iptables -X SCANNERS-BLOCK 2>/dev/null
+    ip6tables -F SCANNERS-BLOCK 2>/dev/null
+    ip6tables -X SCANNERS-BLOCK 2>/dev/null
+
+    echo "4. Удаление списков IP..."
+    ipset flush SCANNERS-BLOCK-V4 2>/dev/null
+    ipset destroy SCANNERS-BLOCK-V4 2>/dev/null
+    ipset flush SCANNERS-BLOCK-V6 2>/dev/null
+    ipset destroy SCANNERS-BLOCK-V6 2>/dev/null
     
     systemctl restart rsyslog
     systemctl daemon-reload
@@ -94,26 +107,36 @@ uninstall_process() {
     exit 0
 }
 
-# --- 🔄 ОБНОВЛЕНИЕ СПИСКОВ ---
-update_lists() {
-    echo -e "\n${CYAN}🔄 Обновление списков блокировки...${NC}"
-    traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
-    echo -e "${GREEN}✅ Списки обновлены!${NC}"
-    sleep 2
-}
-
-# --- 🧪 ТЕСТ БЛОКИРОВКИ ---
+# --- 🧪 ТЕСТ БЛОКИРОВКИ (FIX) ---
 test_blocking() {
     echo -e "\n${YELLOW}=== 🧪 ТЕСТ БЛОКИРОВКИ ===${NC}"
-    read -p "Введите IP для бана (тест): " test_ip
-    [[ -z "$test_ip" ]] && return
-
-    if ipset add SCANNERS-BLOCK-V4 "$test_ip" 2>/dev/null; then
-        echo -e "${GREEN}✅ IP $test_ip добавлен в бан! Проверяйте пинг.${NC}"
-    else
-        echo -e "${RED}❌ Ошибка добавления (возможно уже в бане).${NC}"
+    echo "Введите IP для временного бана (например 1.1.1.1):"
+    read -p "IP: " test_ip < /dev/tty
+    
+    if [[ -z "$test_ip" ]]; then
+        echo "Отмена."
+        return
     fi
-    read -p "[Enter] назад..."
+
+    # Пробуем добавить
+    OUTPUT=$(ipset add SCANNERS-BLOCK-V4 "$test_ip" 2>&1)
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ IP $test_ip успешно заблокирован!${NC}"
+        echo "Проверьте пинг с этого IP."
+    else
+        # Если ошибка, выводим её (часто бывает 'Element exists')
+        echo -e "${RED}❌ Ошибка:${NC} $OUTPUT"
+    fi
+    read -p "[Enter] назад..." < /dev/tty
+}
+
+# --- 🔄 ОБНОВЛЕНИЕ ---
+update_lists() {
+    echo -e "\n${CYAN}🔄 Обновление списков...${NC}"
+    # Показываем лог, не скрываем ошибки
+    traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
+    echo -e "${GREEN}✅ Готово!${NC}"
+    sleep 2
 }
 
 # --- 📦 УСТАНОВКА ---
@@ -121,33 +144,35 @@ install_process() {
     trap 'exit 1' INT
     clear
     echo -e "${CYAN}🚀 УСТАНОВКА TRAFFICGUARD PRO${NC}"
+    echo -e "${YELLOW}Логи установки выводятся полностью. Следите за ошибками!${NC}"
+    sleep 1
     
-    # 1. ПРОВЕРКА FIREWALL (CRITICAL)
+    # 1. ПРОВЕРКА БЕЗОПАСНОСТИ
     check_firewall_safety
     
-    # 2. Зависимости
-    echo -e "\n${BLUE}[INFO] Установка зависимостей...${NC}"
+    # 2. Установка пакетов (показываем вывод!)
+    echo -e "\n${BLUE}[INFO] Установка зависимостей (apt)...${NC}"
     apt-get update
     apt-get install -y curl wget rsyslog ipset ufw grep sed coreutils whois
     systemctl enable --now rsyslog
 
-    # 3. Скачивание
-    echo -e "\n${BLUE}[INFO] Скачивание бинарника...${NC}"
+    # 3. Скачивание (показываем вывод!)
+    echo -e "\n${BLUE}[INFO] Скачивание TrafficGuard...${NC}"
     if command -v curl >/dev/null; then curl -fsSL "$TG_URL" | bash; else wget -qO- "$TG_URL" | bash; fi
 
-    # 4. Запуск
-    echo -e "\n${BLUE}[INFO] Применение правил...${NC}"
+    # 4. Применение правил (показываем вывод! Это покажет warning UFW если есть)
+    echo -e "\n${BLUE}[INFO] Настройка Firewall...${NC}"
     traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
 
     # 5. Проверка успеха
     if [ $? -ne 0 ]; then
-        echo -e "\n${RED}❌ ОШИБКА! TrafficGuard не смог применить правила.${NC}"
-        echo "Смотрите вывод выше (скорее всего проблема в UFW/Iptables)."
+        echo -e "\n${RED}❌ ОШИБКА УСТАНОВКИ!${NC}"
+        echo "TrafficGuard вернул ошибку. Проверьте вывод выше (UFW/SSH)."
         exit 1
     fi
 
     # 6. Фиксы
-    echo -e "\n${BLUE}[INFO] Настройка логов...${NC}"
+    echo -e "\n${BLUE}[INFO] Финальная настройка...${NC}"
     mkdir -p /var/log
     touch /var/log/iptables-scanners-{ipv4,ipv6}.log
     LOG_GROUP="syslog"; getent group adm >/dev/null && LOG_GROUP="adm"
