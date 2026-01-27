@@ -1,11 +1,18 @@
 #!/bin/bash
-# 🔥 TrafficGuard PRO INSTALLER v5.0 (Ctrl+C Fix & Launcher)
-# Описание: Исправлен выход по Ctrl+C и добавлено стартовое меню.
+# 🔥 TrafficGuard PRO INSTALLER v6.0 (Clean Update & Pipe Fix)
+# Описание: Полное удаление старого кода, чистая установка, фикс меню для curl | bash.
 
 MANAGER_PATH="/opt/trafficguard-manager.sh"
+LINK_PATH="/usr/local/bin/rknpidor"
 
 # ==============================================================================
-# 1. СОЗДАНИЕ СКРИПТА УПРАВЛЕНИЯ
+# 1. ЧИСТКА СТАРОЙ ВЕРСИИ (FORCE UPDATE)
+# ==============================================================================
+# Удаляем старый менеджер и симлинк, чтобы записать начисто
+rm -f "$MANAGER_PATH" "$LINK_PATH"
+
+# ==============================================================================
+# 2. ЗАПИСЬ НОВОГО МЕНЕДЖЕРА
 # ==============================================================================
 cat > "$MANAGER_PATH" << 'EOF'
 #!/bin/bash
@@ -13,30 +20,35 @@ set -u
 
 # --- ЦВЕТА ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
+
 TG_URL="https://raw.githubusercontent.com/dotX12/traffic-guard/master/install.sh"
 LIST_GOV="https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/government_networks.list"
 LIST_SCAN="https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/antiscanner.list"
 
 # --- ПРОВЕРКИ ---
 check_root() {
-    [[ $EUID -ne 0 ]] && { echo -e "${RED}Нужен sudo!${NC}"; exit 1; }
+    [[ $EUID -ne 0 ]] && { echo -e "${RED}Запуск только от root (sudo)!${NC}"; exit 1; }
 }
 
-# --- УСТАНОВКА ---
+# --- УСТАНОВКА / ОБНОВЛЕНИЕ ---
 install_process() {
     clear
-    echo -e "${CYAN}📦 Установка компонентов...${NC}"
+    echo -e "${CYAN}♻️  Обновление компонентов...${NC}"
+    
+    # Зависимости
     apt-get update -qq >/dev/null
     apt-get install -y curl wget rsyslog ipset ufw grep sed coreutils >/dev/null 2>&1
     systemctl enable --now rsyslog >/dev/null 2>&1
 
-    echo -e "${CYAN}🔧 TrafficGuard...${NC}"
+    # Установка бинарника
+    echo -e "${CYAN}⬇️  Скачивание TrafficGuard...${NC}"
     if command -v curl >/dev/null; then curl -fsSL "$TG_URL" | bash; else wget -qO- "$TG_URL" | bash; fi
 
-    echo -e "${CYAN}🛡️ Загрузка правил (это быстро)...${NC}"
+    # Применение правил
+    echo -e "${CYAN}🛡️  Загрузка баз блокировки...${NC}"
     traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging >/dev/null
 
-    # FIX ПРАВ
+    # Фикс прав и логов
     mkdir -p /var/log
     touch /var/log/iptables-scanners-{ipv4,ipv6}.log
     LOG_GROUP="syslog"; getent group adm >/dev/null && LOG_GROUP="adm"
@@ -44,32 +56,24 @@ install_process() {
     chmod 640 /var/log/iptables-scanners-*.log
     systemctl restart rsyslog
     
-    echo -e "${GREEN}✅ Готово!${NC}"
+    echo -e "${GREEN}✅ Система обновлена и активна!${NC}"
     sleep 1
 }
 
-# --- ФУНКЦИЯ ПРОСМОТРА ЛОГОВ (БЕЗОПАСНАЯ) ---
+# --- ПРОСМОТР ЛОГОВ ---
 view_log() {
     local file=$1
-    echo -e "\n${YELLOW}=== РЕЖИМ ПРОСМОТРА (Нажмите Ctrl+C для возврата) ===${NC}"
-    
-    # 1. Разрешаем прерывание (SIGINT) для tail
+    echo -e "\n${YELLOW}=== LIVE LOG (Ctrl+C для выхода) ===${NC}"
     trap - INT
-    
-    # 2. Запускаем tail (он заблокирует скрипт, пока работает)
     tail -f "$file"
-    
-    # 3. Как только нажали Ctrl+C, tail умирает, и мы попадаем сюда:
     echo -e "\n${CYAN}Возврат в меню...${NC}"
     sleep 1
-    
-    # 4. Возвращаем игнор прерывания для самого меню
     trap '' INT
 }
 
-# --- МЕНЮ МОНИТОРИНГА ---
+# --- ГЛАВНОЕ МЕНЮ ---
 show_menu() {
-    # Глобально в меню ИГНОРИРУЕМ Ctrl+C (чтобы не вылетал скрипт)
+    # Игнорируем прерывание в меню
     trap '' INT
 
     while true; do
@@ -81,6 +85,7 @@ show_menu() {
         [[ -z "$PKTS_CNT" ]] && PKTS_CNT="0"
         RSYSLOG=$(systemctl is-active rsyslog >/dev/null && echo "${GREEN}OK${NC}" || echo "${RED}FAIL${NC}")
 
+        # Отрисовка
         echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${NC}"
         echo -e "${CYAN}║           🛡️  TRAFFICGUARD PRO MONITOR              ║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════╣${NC}"
@@ -97,39 +102,28 @@ show_menu() {
         echo -e " ${RED}0.${NC} ❌ Выход"
         echo ""
         
-        read -p "👉 Ваш выбор: " choice
+        # 🔥 ВАЖНЫЙ ФИКС: Чтение напрямую из TTY (клавиатуры), игнорируя PIPE от curl
+        echo -ne "${CYAN}👉 Ваш выбор:${NC} "
+        read -r choice < /dev/tty
 
         case $choice in
             1)
                 echo -e "\n${GREEN}ТОП 20:${NC}"
                 [ -f /var/log/iptables-scanners-aggregate.csv ] && tail -20 /var/log/iptables-scanners-aggregate.csv || echo "Нет данных"
-                read -p $'\n[Enter] назад...'
+                read -p $'\n[Enter] назад...' < /dev/tty
                 ;;
             2) view_log "/var/log/iptables-scanners-ipv4.log" ;;
             3) view_log "/var/log/iptables-scanners-ipv6.log" ;;
-            4) traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging; echo "OK"; sleep 1 ;;
+            4) 
+                traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
+                echo -e "${GREEN}Обновлено!${NC}"
+                sleep 2 
+                ;;
             5) install_process ;;
             0) exit 0 ;;
-            *) echo "Неверно"; sleep 1 ;;
+            *) echo "Неверный выбор"; sleep 1 ;;
         esac
     done
-}
-
-# --- МИНИ-МЕНЮ ЗАПУСКА (ЕСЛИ НЕТ АРГУМЕНТОВ) ---
-show_launcher() {
-    clear
-    echo -e "${CYAN}🚀 TRAFFICGUARD LAUNCHER${NC}"
-    echo "1. Запустить мониторинг"
-    echo "2. Установить / Переустановить"
-    echo "0. Выход"
-    echo ""
-    read -p "Выбор: " lchoice
-    case $lchoice in
-        1) show_menu ;;
-        2) install_process; show_menu ;;
-        0) exit 0 ;;
-        *) show_menu ;; # По дефолту монитор
-    esac
 }
 
 # --- ТОЧКА ВХОДА ---
@@ -138,30 +132,30 @@ check_root
 case "${1:-}" in
     install) install_process ;;
     monitor) show_menu ;;
-    *) show_launcher ;; 
+    *) 
+        # Если запущено без аргументов, показываем меню
+        show_menu 
+        ;; 
 esac
 EOF
 
 chmod +x "$MANAGER_PATH"
 
-# Обновляем symlink
-rm -f /usr/local/bin/rknpidor
-ln -s "$MANAGER_PATH" /usr/local/bin/rknpidor
+# ==============================================================================
+# 3. ФИНАЛИЗАЦИЯ
+# ==============================================================================
+# Создаем глобальную команду
+ln -s "$MANAGER_PATH" "$LINK_PATH"
 
-# ЛОГИКА ПЕРВОГО ЗАПУСКА
-# Если скрипт запущен через pipe (curl | bash) и без аргументов install/monitor,
-# мы делаем тихую установку и сразу открываем монитор.
-if [[ -z "${1:-}" ]]; then
-    echo -e "${GREEN}✅ Скрипт обновлен!${NC}"
-    echo -e "Теперь введите команду: ${CYAN}rknpidor${NC}"
-    echo -e "Или используйте меню ниже:"
-    sleep 1
-    # При первом запуске curl сразу кидаем в установку, потом в меню
-    if [[ ! -f /usr/local/bin/traffic-guard ]]; then
-        /opt/trafficguard-manager.sh install
-    fi
-    /opt/trafficguard-manager.sh monitor
-else
-    # Если вызван rknpidor install
-    /opt/trafficguard-manager.sh "$1"
+echo -e "${GREEN}✅ TrafficGuard обновлен до последней версии!${NC}"
+echo -e "Для запуска в будущем используйте команду: ${CYAN}rknpidor${NC}"
+echo -e "Запуск меню..."
+sleep 2
+
+# Принудительный запуск установки при первом прогоне, если бинарника нет
+if [[ ! -f /usr/local/bin/traffic-guard ]]; then
+    /opt/trafficguard-manager.sh install
 fi
+
+# ЗАПУСК МЕНЮ
+/opt/trafficguard-manager.sh monitor
