@@ -1,14 +1,17 @@
 #!/bin/bash
-# 🔥 TrafficGuard PRO INSTALLER v13.0 (Ban/Unban Feature)
+# 🔥 TrafficGuard PRO INSTALLER v15.0 (Manual List & Select)
 # Описание:
-# - Меню "Тест блокировки" заменено на "Управление IP".
-# - Добавлена возможность удалять (разбанивать) IP из списка.
+# - Ведется журнал ручных банов (/opt/trafficguard-manual.list).
+# - В меню разбана можно выбрать IP из списка цифрой.
 
 MANAGER_PATH="/opt/trafficguard-manager.sh"
 LINK_PATH="/usr/local/bin/rknpidor"
+MANUAL_FILE="/opt/trafficguard-manual.list"
 
+# 1. ЧИСТКА
 rm -f "$MANAGER_PATH" "$LINK_PATH"
 
+# 2. ЗАПИСЬ
 cat > "$MANAGER_PATH" << 'EOF'
 #!/bin/bash
 set -u
@@ -19,13 +22,13 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CY
 TG_URL="https://raw.githubusercontent.com/dotX12/traffic-guard/master/install.sh"
 LIST_GOV="https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/government_networks.list"
 LIST_SCAN="https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/antiscanner.list"
+MANUAL_FILE="/opt/trafficguard-manual.list"
 
 check_root() {
     [[ $EUID -ne 0 ]] && { echo -e "${RED}Запуск только от root!${NC}"; exit 1; }
 }
 
 check_firewall_safety() {
-    # (Код проверки Firewall без изменений из v12.0)
     echo -e "${BLUE}[CHECK] Проверка конфигурации Firewall...${NC}"
     if command -v ufw >/dev/null; then
         UFW_STATUS=$(ufw status | grep "Status" | awk '{print $2}')
@@ -40,7 +43,6 @@ check_firewall_safety() {
         fi
     else
         if ! dpkg -l | grep -q netfilter-persistent; then
-            echo -e "${CYAN}Устанавливаем iptables-persistent...${NC}"
             DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
             DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent netfilter-persistent
         fi
@@ -49,7 +51,10 @@ check_firewall_safety() {
 
 uninstall_process() {
     echo -e "\n${RED}=== УДАЛЕНИЕ TRAFFICGUARD ===${NC}"
+    trap 'echo -e "\nОтмена."; return' INT
     read -p "Вы уверены? (y/N): " confirm < /dev/tty
+    trap 'exit 0' INT
+    
     [[ "$confirm" != "y" ]] && return
 
     systemctl stop antiscan-aggregate.timer antiscan-aggregate.service 2>/dev/null
@@ -57,7 +62,7 @@ uninstall_process() {
     
     rm -f /usr/local/bin/traffic-guard /usr/local/bin/antiscan-aggregate-logs.sh
     rm -f /etc/systemd/system/antiscan-* /etc/rsyslog.d/10-iptables-scanners.conf /etc/logrotate.d/iptables-scanners
-    rm -f /usr/local/bin/rknpidor /opt/trafficguard-manager.sh
+    rm -f /usr/local/bin/rknpidor /opt/trafficguard-manager.sh "$MANUAL_FILE"
     
     iptables -D INPUT -j SCANNERS-BLOCK 2>/dev/null
     iptables -F SCANNERS-BLOCK 2>/dev/null
@@ -73,48 +78,90 @@ uninstall_process() {
     exit 0
 }
 
-# --- 🧪 УПРАВЛЕНИЕ IP (BAN/UNBAN) ---
+# --- 🧪 УПРАВЛЕНИЕ IP ---
 manage_test_ip() {
+    # Создаем файл списка, если нет
+    touch "$MANUAL_FILE"
+    trap 'continue' INT
+    
     while true; do
         clear
-        echo -e "${YELLOW}=== 🧪 УПРАВЛЕНИЕ IP (Ручной режим) ===${NC}"
-        echo "Здесь можно вручную добавить IP в бан или убрать его."
-        echo ""
+        echo -e "${YELLOW}=== 🧪 УПРАВЛЕНИЕ IP ===${NC}"
         echo -e " ${RED}1.${NC} ⛔ ЗАБАНИТЬ IP (Add)"
-        echo -e " ${GREEN}2.${NC} ✅ РАЗБАНИТЬ IP (Delete)"
-        echo -e " ${CYAN}0.${NC} ↩️  Назад в меню"
+        echo -e " ${GREEN}2.${NC} ✅ РАЗБАНИТЬ IP (Select from list)"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
         echo ""
         echo -ne "${YELLOW}👉 Действие:${NC} "
-        read -r action < /dev/tty
+        
+        read -r action < /dev/tty || continue
 
         case $action in
             1)
-                echo -e "\nВведите IP для БЛОКИРОВКИ:"
+                echo -e "\nВведите IP для БЛОКИРОВКИ ${YELLOW}(Ctrl+C = Отмена)${NC}:"
+                trap 'echo -e "\nОтмена."; sleep 1; continue' INT
                 read -p "IP: " ip < /dev/tty
                 [[ -z "$ip" ]] && continue
                 
                 OUTPUT=$(ipset add SCANNERS-BLOCK-V4 "$ip" 2>&1)
                 if [ $? -eq 0 ]; then
                     echo -e "${GREEN}✅ IP $ip ЗАБЛОКИРОВАН!${NC}"
+                    # Добавляем в файл, если его там еще нет
+                    if ! grep -Fxq "$ip" "$MANUAL_FILE"; then
+                        echo "$ip" >> "$MANUAL_FILE"
+                    fi
                 else
                     echo -e "${RED}❌ Ошибка:${NC} $OUTPUT"
                 fi
-                read -p "[Enter] продолжить..." < /dev/tty
+                read -p "[Enter]..." < /dev/tty
                 ;;
             2)
-                echo -e "\nВведите IP для РАЗБЛОКИРОВКИ:"
-                read -p "IP: " ip < /dev/tty
-                [[ -z "$ip" ]] && continue
-                
-                OUTPUT=$(ipset del SCANNERS-BLOCK-V4 "$ip" 2>&1)
-                if [ $? -eq 0 ]; then
-                    echo -e "${GREEN}✅ IP $ip РАЗБЛОКИРОВАН (Удален из списка)!${NC}"
+                echo -e "\n${GREEN}=== СПИСОК РУЧНЫХ БАНОВ ===${NC}"
+                if [ ! -s "$MANUAL_FILE" ]; then
+                    echo "Список пуст."
                 else
-                    echo -e "${RED}❌ Ошибка:${NC} $OUTPUT (Возможно IP не был в списке)"
+                    # Читаем файл в массив
+                    mapfile -t MANUAL_IPS < "$MANUAL_FILE"
+                    i=1
+                    for ip in "${MANUAL_IPS[@]}"; do
+                        echo -e "${CYAN}$i)${NC} $ip"
+                        ((i++))
+                    done
                 fi
-                read -p "[Enter] продолжить..." < /dev/tty
+                
+                echo -e "\nВведите ${CYAN}НОМЕР${NC} из списка или ${CYAN}IP${NC} вручную:"
+                trap 'echo -e "\nОтмена."; sleep 1; continue' INT
+                read -p "Выбор: " input < /dev/tty
+                [[ -z "$input" ]] && continue
+                
+                TARGET_IP=""
+                
+                # Проверяем, число это или IP
+                if [[ "$input" =~ ^[0-9]+$ ]] && [ "$input" -le "${#MANUAL_IPS[@]}" ] && [ "$input" -gt 0 ]; then
+                    # Это номер из списка (массив начинается с 0, ввод с 1)
+                    INDEX=$((input-1))
+                    TARGET_IP="${MANUAL_IPS[$INDEX]}"
+                else
+                    # Это вероятно IP
+                    TARGET_IP="$input"
+                fi
+                
+                echo -e "Разбаниваем: ${YELLOW}$TARGET_IP${NC}..."
+                
+                OUTPUT=$(ipset del SCANNERS-BLOCK-V4 "$TARGET_IP" 2>&1)
+                # Удаляем из файла в любом случае
+                sed -i "/^$TARGET_IP$/d" "$MANUAL_FILE"
+                
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✅ Успешно разбанен!${NC}"
+                else
+                    echo -e "${RED}⚠️  Warning:${NC} $OUTPUT (Удален из списка)"
+                fi
+                read -p "[Enter]..." < /dev/tty
                 ;;
-            0) return ;;
+            0) 
+                trap 'exit 0' INT
+                return 
+                ;;
             *) ;;
         esac
     done
@@ -153,6 +200,9 @@ install_process() {
     LOG_GROUP="syslog"; getent group adm >/dev/null && LOG_GROUP="adm"
     chown syslog:$LOG_GROUP /var/log/iptables-scanners-*.log
     chmod 640 /var/log/iptables-scanners-*.log
+    
+    # Создаем файл для ручных банов, если нет
+    touch "$MANUAL_FILE"
     
     systemctl restart rsyslog
     systemctl restart antiscan-aggregate.service 2>/dev/null || true
