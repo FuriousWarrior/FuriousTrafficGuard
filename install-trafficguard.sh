@@ -1,11 +1,12 @@
 #!/bin/bash
-# 🔥 TrafficGuard PRO INSTALLER v3.0 (rknpidor + AutoFix + Красивое меню)
-# 1 команда = полная защита + мониторинг навсегда!
+# 🔥 TrafficGuard PRO v3.1 FIX
 
 SELF_PATH="/opt/trafficguard-manager.sh"
 
+# СОЗДАЁМ МЕНЕДЖЕР
 cat > "$SELF_PATH" << 'EOF'
 #!/bin/bash
+# TrafficGuard Manager v3.1
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; PURPLE='\033[0;35m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -153,18 +154,16 @@ EOF
 
 chmod +x "$SELF_PATH"
 
-# 🔥 ГЛОБАЛЬНЫЙ АЛИАС rknpidor
-mkdir -p /etc/profile.d
+# ГЛОБАЛЬНЫЙ rknpidor
 cat > /etc/profile.d/rknpidor.sh << EOF
-#!/bin/bash
 alias rknpidor='sudo /opt/trafficguard-manager.sh monitor'
-export rknpidor
 EOF
-chmod +x /etc/profile.d/rknpidor.sh
 
-# Для текущей сессии
-export rknpidor="sudo /opt/trafficguard-manager.sh monitor"
+# ФИКС: ЯВНЫЙ ЗАПУСК УСТАНОВКИ
+echo -e "${GREEN}✅ Менеджер /opt/trafficguard-manager.sh готов!${NC}"
+echo -e "${CYAN}rknpidor${GREEN} добавлен глобально!${NC}"
+echo -e "\n${PURPLE}🔥 Запуск полной установки...${NC}"
+echo -e "${CYAN}Команда:${NC} ${GREEN}rknpidor${NC} (после установки)${NC}\n"
 
-echo -e "${GREEN}🚀 /opt/trafficguard-manager.sh + ${CYAN}rknpidor${GREEN} (глобально!) ГОТОВЫ!${NC}"
-echo -e "${PURPLE}Запуск полной установки...${NC}"
-exec "$SELF_PATH" install
+# ЯВНЫЙ ЗАПУСК УСТАНОВКИ
+"$SELF_PATH" install
