@@ -1,18 +1,14 @@
 #!/bin/bash
-# 🔥 TrafficGuard PRO INSTALLER v12.0 (Bugfix & Safety)
+# 🔥 TrafficGuard PRO INSTALLER v13.0 (Ban/Unban Feature)
 # Описание:
-# 1. Исправлен Uninstall (сначала удаляет правила iptables, потом ipset).
-# 2. Исправлен Test Blocking (меню теперь вызывает функцию).
-# 3. Полный вывод логов (без /dev/null) для контроля UFW.
-# 4. Защита от потери SSH (проверка правил UFW).
+# - Меню "Тест блокировки" заменено на "Управление IP".
+# - Добавлена возможность удалять (разбанивать) IP из списка.
 
 MANAGER_PATH="/opt/trafficguard-manager.sh"
 LINK_PATH="/usr/local/bin/rknpidor"
 
-# 1. ЧИСТКА СТАРОЙ ВЕРСИИ
 rm -f "$MANAGER_PATH" "$LINK_PATH"
 
-# 2. ЗАПИСЬ НОВОГО СКРИПТА
 cat > "$MANAGER_PATH" << 'EOF'
 #!/bin/bash
 set -u
@@ -28,151 +24,130 @@ check_root() {
     [[ $EUID -ne 0 ]] && { echo -e "${RED}Запуск только от root!${NC}"; exit 1; }
 }
 
-# --- 🛡️ ПРОВЕРКА БЕЗОПАСНОСТИ FIREWALL ---
 check_firewall_safety() {
+    # (Код проверки Firewall без изменений из v12.0)
     echo -e "${BLUE}[CHECK] Проверка конфигурации Firewall...${NC}"
-    
-    # Если UFW установлен
     if command -v ufw >/dev/null; then
         UFW_STATUS=$(ufw status | grep "Status" | awk '{print $2}')
-        # Смотрим добавленные правила
         UFW_RULES=$(ufw show added 2>/dev/null)
-        
-        # ЛОГИКА: Если UFW выключен (inactive) И в правилах НЕТ SSH (22)
         if [[ "$UFW_STATUS" == "inactive" ]]; then
             if [[ "$UFW_RULES" != *"22"* ]] && [[ "$UFW_RULES" != *"SSH"* ]] && [[ "$UFW_RULES" != *"OpenSSH"* ]]; then
-                echo -e "\n${RED}⛔ АВАРИЙНАЯ ОСТАНОВКА! РИСК ПОТЕРИ ДОСТУПА!${NC}"
-                echo -e "${YELLOW}У вас установлен UFW, но он выключен и в нем НЕТ правил для SSH.${NC}"
-                echo "TrafficGuard может активировать фаервол, и вы потеряете доступ к серверу."
-                echo ""
-                echo -e "👉 РЕШЕНИЕ: Выполните команду: ${GREEN}ufw allow ssh${NC}"
-                echo "   Затем запустите установку снова."
-                echo ""
+                echo -e "\n${RED}⛔ АВАРИЙНАЯ ОСТАНОВКА!${NC}"
+                echo -e "${YELLOW}UFW выключен и нет правил SSH.${NC}"
+                echo "Выполните: ufw allow ssh"
                 exit 1
             fi
         fi
-        echo -e "${GREEN}[OK] Конфигурация UFW безопасна.${NC}"
     else
-        # Если UFW нет, проверяем iptables-persistent
-        echo -e "${YELLOW}[INFO] UFW не найден. Проверяем iptables-persistent...${NC}"
         if ! dpkg -l | grep -q netfilter-persistent; then
             echo -e "${CYAN}Устанавливаем iptables-persistent...${NC}"
-            # DEBIAN_FRONTEND=noninteractive чтобы не висело окно настройки
             DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
             DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent netfilter-persistent
         fi
     fi
 }
 
-# --- 🗑️ УДАЛЕНИЕ (UNINSTALL FIX) ---
 uninstall_process() {
     echo -e "\n${RED}=== УДАЛЕНИЕ TRAFFICGUARD ===${NC}"
-    echo "Это действие удалит скрипты, сервисы и сбросит правила блокировки."
     read -p "Вы уверены? (y/N): " confirm < /dev/tty
     [[ "$confirm" != "y" ]] && return
 
-    echo "1. Остановка сервисов..."
     systemctl stop antiscan-aggregate.timer antiscan-aggregate.service 2>/dev/null
     systemctl disable antiscan-aggregate.timer antiscan-aggregate.service 2>/dev/null
     
-    echo "2. Удаление файлов..."
-    rm -f /usr/local/bin/traffic-guard
-    rm -f /usr/local/bin/antiscan-aggregate-logs.sh
-    rm -f /etc/systemd/system/antiscan-*
-    rm -f /etc/rsyslog.d/10-iptables-scanners.conf
-    rm -f /etc/logrotate.d/iptables-scanners
-    rm -f /usr/local/bin/rknpidor
-    rm -f /opt/trafficguard-manager.sh
+    rm -f /usr/local/bin/traffic-guard /usr/local/bin/antiscan-aggregate-logs.sh
+    rm -f /etc/systemd/system/antiscan-* /etc/rsyslog.d/10-iptables-scanners.conf /etc/logrotate.d/iptables-scanners
+    rm -f /usr/local/bin/rknpidor /opt/trafficguard-manager.sh
     
-    echo "3. Очистка правил Firewall..."
-    # Сначала удаляем правило из iptables, иначе ipset не удалится (device busy)
     iptables -D INPUT -j SCANNERS-BLOCK 2>/dev/null
-    ip6tables -D INPUT -j SCANNERS-BLOCK 2>/dev/null
-    
     iptables -F SCANNERS-BLOCK 2>/dev/null
     iptables -X SCANNERS-BLOCK 2>/dev/null
-    ip6tables -F SCANNERS-BLOCK 2>/dev/null
-    ip6tables -X SCANNERS-BLOCK 2>/dev/null
-
-    echo "4. Удаление списков IP..."
+    
     ipset flush SCANNERS-BLOCK-V4 2>/dev/null
     ipset destroy SCANNERS-BLOCK-V4 2>/dev/null
     ipset flush SCANNERS-BLOCK-V6 2>/dev/null
     ipset destroy SCANNERS-BLOCK-V6 2>/dev/null
     
     systemctl restart rsyslog
-    systemctl daemon-reload
-    
-    echo -e "${GREEN}✅ TrafficGuard полностью удален.${NC}"
+    echo -e "${GREEN}✅ Удалено.${NC}"
     exit 0
 }
 
-# --- 🧪 ТЕСТ БЛОКИРОВКИ (FIX) ---
-test_blocking() {
-    echo -e "\n${YELLOW}=== 🧪 ТЕСТ БЛОКИРОВКИ ===${NC}"
-    echo "Введите IP для временного бана (например 1.1.1.1):"
-    read -p "IP: " test_ip < /dev/tty
-    
-    if [[ -z "$test_ip" ]]; then
-        echo "Отмена."
-        return
-    fi
+# --- 🧪 УПРАВЛЕНИЕ IP (BAN/UNBAN) ---
+manage_test_ip() {
+    while true; do
+        clear
+        echo -e "${YELLOW}=== 🧪 УПРАВЛЕНИЕ IP (Ручной режим) ===${NC}"
+        echo "Здесь можно вручную добавить IP в бан или убрать его."
+        echo ""
+        echo -e " ${RED}1.${NC} ⛔ ЗАБАНИТЬ IP (Add)"
+        echo -e " ${GREEN}2.${NC} ✅ РАЗБАНИТЬ IP (Delete)"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад в меню"
+        echo ""
+        echo -ne "${YELLOW}👉 Действие:${NC} "
+        read -r action < /dev/tty
 
-    # Пробуем добавить
-    OUTPUT=$(ipset add SCANNERS-BLOCK-V4 "$test_ip" 2>&1)
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ IP $test_ip успешно заблокирован!${NC}"
-        echo "Проверьте пинг с этого IP."
-    else
-        # Если ошибка, выводим её (часто бывает 'Element exists')
-        echo -e "${RED}❌ Ошибка:${NC} $OUTPUT"
-    fi
-    read -p "[Enter] назад..." < /dev/tty
+        case $action in
+            1)
+                echo -e "\nВведите IP для БЛОКИРОВКИ:"
+                read -p "IP: " ip < /dev/tty
+                [[ -z "$ip" ]] && continue
+                
+                OUTPUT=$(ipset add SCANNERS-BLOCK-V4 "$ip" 2>&1)
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✅ IP $ip ЗАБЛОКИРОВАН!${NC}"
+                else
+                    echo -e "${RED}❌ Ошибка:${NC} $OUTPUT"
+                fi
+                read -p "[Enter] продолжить..." < /dev/tty
+                ;;
+            2)
+                echo -e "\nВведите IP для РАЗБЛОКИРОВКИ:"
+                read -p "IP: " ip < /dev/tty
+                [[ -z "$ip" ]] && continue
+                
+                OUTPUT=$(ipset del SCANNERS-BLOCK-V4 "$ip" 2>&1)
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✅ IP $ip РАЗБЛОКИРОВАН (Удален из списка)!${NC}"
+                else
+                    echo -e "${RED}❌ Ошибка:${NC} $OUTPUT (Возможно IP не был в списке)"
+                fi
+                read -p "[Enter] продолжить..." < /dev/tty
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
 }
 
-# --- 🔄 ОБНОВЛЕНИЕ ---
 update_lists() {
     echo -e "\n${CYAN}🔄 Обновление списков...${NC}"
-    # Показываем лог, не скрываем ошибки
     traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
     echo -e "${GREEN}✅ Готово!${NC}"
     sleep 2
 }
 
-# --- 📦 УСТАНОВКА ---
 install_process() {
     trap 'exit 1' INT
     clear
     echo -e "${CYAN}🚀 УСТАНОВКА TRAFFICGUARD PRO${NC}"
-    echo -e "${YELLOW}Логи установки выводятся полностью. Следите за ошибками!${NC}"
-    sleep 1
-    
-    # 1. ПРОВЕРКА БЕЗОПАСНОСТИ
     check_firewall_safety
     
-    # 2. Установка пакетов (показываем вывод!)
-    echo -e "\n${BLUE}[INFO] Установка зависимостей (apt)...${NC}"
+    echo -e "\n${BLUE}[INFO] Установка...${NC}"
     apt-get update
     apt-get install -y curl wget rsyslog ipset ufw grep sed coreutils whois
     systemctl enable --now rsyslog
 
-    # 3. Скачивание (показываем вывод!)
-    echo -e "\n${BLUE}[INFO] Скачивание TrafficGuard...${NC}"
     if command -v curl >/dev/null; then curl -fsSL "$TG_URL" | bash; else wget -qO- "$TG_URL" | bash; fi
 
-    # 4. Применение правил (показываем вывод! Это покажет warning UFW если есть)
-    echo -e "\n${BLUE}[INFO] Настройка Firewall...${NC}"
+    echo -e "\n${BLUE}[INFO] Настройка правил...${NC}"
     traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
 
-    # 5. Проверка успеха
     if [ $? -ne 0 ]; then
         echo -e "\n${RED}❌ ОШИБКА УСТАНОВКИ!${NC}"
-        echo "TrafficGuard вернул ошибку. Проверьте вывод выше (UFW/SSH)."
         exit 1
     fi
 
-    # 6. Фиксы
-    echo -e "\n${BLUE}[INFO] Финальная настройка...${NC}"
     mkdir -p /var/log
     touch /var/log/iptables-scanners-{ipv4,ipv6}.log
     LOG_GROUP="syslog"; getent group adm >/dev/null && LOG_GROUP="adm"
@@ -183,11 +158,10 @@ install_process() {
     systemctl restart antiscan-aggregate.service 2>/dev/null || true
     systemctl restart antiscan-aggregate.timer
     
-    echo -e "\n${GREEN}✅ Установка завершена успешно!${NC}"
+    echo -e "\n${GREEN}✅ Установка завершена!${NC}"
     sleep 2
 }
 
-# --- 📊 МЕНЮ ---
 view_log() {
     local file=$1
     echo -e "\n${YELLOW}=== LIVE LOG (Ctrl+C для возврата) ===${NC}"
@@ -215,7 +189,7 @@ show_menu() {
         echo -e " ${GREEN}1.${NC} 📈 Топ атак (CSV)"
         echo -e " ${GREEN}2.${NC} 🪵 Логи IPv4 (Live)"
         echo -e " ${GREEN}3.${NC} 🪵 Логи IPv6 (Live)"
-        echo -e " ${GREEN}4.${NC} 🧪 Тест блокировки IP"
+        echo -e " ${GREEN}4.${NC} 🧪 Управление IP (Ban/Unban)"
         echo -e " ${GREEN}5.${NC} 🔄 Обновить списки (Update)"
         echo -e " ${GREEN}6.${NC} 🛠️  Переустановить (Reinstall)"
         echo -e " ${RED}7.${NC} 🗑️  Удалить (Uninstall)"
@@ -233,7 +207,7 @@ show_menu() {
                 ;;
             2) view_log "/var/log/iptables-scanners-ipv4.log" ;;
             3) view_log "/var/log/iptables-scanners-ipv6.log" ;;
-            4) test_blocking ;;
+            4) manage_test_ip ;;
             5) update_lists ;;
             6) 
                 rm -f /var/log/iptables-scanners-aggregate.csv
@@ -246,9 +220,7 @@ show_menu() {
     done
 }
 
-# --- 🚀 ЗАПУСК ---
 check_root
-
 case "${1:-}" in
     install) install_process ;;
     monitor) show_menu ;;
@@ -261,7 +233,6 @@ EOF
 chmod +x "$MANAGER_PATH"
 ln -s "$MANAGER_PATH" "$LINK_PATH"
 
-# ПЕРВЫЙ ЗАПУСК
 if [[ ! -f /usr/local/bin/traffic-guard ]]; then
     /opt/trafficguard-manager.sh install
 fi
