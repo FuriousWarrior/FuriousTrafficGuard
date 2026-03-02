@@ -1,11 +1,10 @@
 #!/bin/bash
-# 🔥 TrafficGuard PRO INSTALLER v15.0 (Manual List & Select)
 # Описание:
 # - Ведется журнал ручных банов (/opt/trafficguard-manual.list).
 # - В меню разбана можно выбрать IP из списка цифрой.
 
 MANAGER_PATH="/opt/trafficguard-manager.sh"
-LINK_PATH="/usr/local/bin/rknpidor"
+LINK_PATH="/usr/local/bin/tfgm"
 MANUAL_FILE="/opt/trafficguard-manual.list"
 
 # 1. ЧИСТКА
@@ -19,9 +18,10 @@ set -u
 # --- ЦВЕТА ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-TG_URL="https://raw.githubusercontent.com/dotX12/traffic-guard/master/install.sh"
-LIST_GOV="https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/government_networks.list"
-LIST_SCAN="https://raw.githubusercontent.com/shadow-netlab/traffic-guard-lists/refs/heads/main/public/antiscanner.list"
+TG_URL="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard/master/install.sh"
+LIST_GOV="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard-lists/refs/heads/main/public/government_networks.list"
+LIST_SCAN="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard-lists/refs/heads/main/public/antiscanner.list"
+LIST_SKIPA="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard-lists/refs/heads/main/public/skipa.list"
 MANUAL_FILE="/opt/trafficguard-manual.list"
 
 check_root() {
@@ -62,7 +62,7 @@ uninstall_process() {
     
     rm -f /usr/local/bin/traffic-guard /usr/local/bin/antiscan-aggregate-logs.sh
     rm -f /etc/systemd/system/antiscan-* /etc/rsyslog.d/10-iptables-scanners.conf /etc/logrotate.d/iptables-scanners
-    rm -f /usr/local/bin/rknpidor /opt/trafficguard-manager.sh "$MANUAL_FILE"
+    rm -f /usr/local/bin/tfgm /opt/trafficguard-manager.sh "$MANUAL_FILE"
     
     iptables -D INPUT -j SCANNERS-BLOCK 2>/dev/null
     iptables -F SCANNERS-BLOCK 2>/dev/null
@@ -169,7 +169,7 @@ manage_test_ip() {
 
 update_lists() {
     echo -e "\n${CYAN}🔄 Обновление списков...${NC}"
-    traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
+    traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" -u "$LIST_SKIPA" --enable-logging
     echo -e "${GREEN}✅ Готово!${NC}"
     sleep 2
 }
@@ -188,7 +188,7 @@ install_process() {
     if command -v curl >/dev/null; then curl -fsSL "$TG_URL" | bash; else wget -qO- "$TG_URL" | bash; fi
 
     echo -e "\n${BLUE}[INFO] Настройка правил...${NC}"
-    traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" --enable-logging
+    traffic-guard full -u "$LIST_GOV" -u "$LIST_SCAN" -u "$LIST_SKIPA" --enable-logging
 
     if [ $? -ne 0 ]; then
         echo -e "\n${RED}❌ ОШИБКА УСТАНОВКИ!${NC}"
@@ -230,7 +230,7 @@ show_menu() {
         [[ -z "$PKTS_CNT" ]] && PKTS_CNT="0"
         
         echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║           🛡️  TRAFFICGUARD PRO MANAGER              ║${NC}"
+        echo -e "${CYAN}║           🛡️  TRAFFICGUARD MANAGER                   ║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════╣${NC}"
         echo -e "║  📊 Подсетей:       ${GREEN}${IPSET_CNT}${NC}                             "
         echo -e "║  🔥 Атак отбито:    ${RED}${PKTS_CNT}${NC}                             "
