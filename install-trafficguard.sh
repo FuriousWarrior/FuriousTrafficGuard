@@ -6,7 +6,7 @@
 MANAGER_PATH="/opt/trafficguard-manager.sh"
 LINK_PATH="/usr/local/bin/tfgm"
 MANUAL_FILE="/opt/trafficguard-manual.list"
-TFGMV=$(traffic-guard -v)
+
 
 # 1. ЧИСТКА
 rm -f "$MANAGER_PATH" "$LINK_PATH"
@@ -24,6 +24,7 @@ LIST_GOV="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard-lists/r
 LIST_SCAN="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard-lists/refs/heads/main/public/antiscanner.list"
 LIST_SKIPA="https://raw.githubusercontent.com/FuriousWarrior/traffic-guard-lists/refs/heads/main/public/skipa.list"
 MANUAL_FILE="/opt/trafficguard-manual.list"
+TFGMV=$(traffic-guard -v)
 
 check_root() {
     [[ $EUID -ne 0 ]] && { echo -e "${RED}Запуск только от root!${NC}"; exit 1; }
