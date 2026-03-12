@@ -6,6 +6,7 @@
 MANAGER_PATH="/opt/trafficguard-manager.sh"
 LINK_PATH="/usr/local/bin/tfgm"
 MANUAL_FILE="/opt/trafficguard-manual.list"
+TFGMV=$(traffic-guard -v)
 
 # 1. ЧИСТКА
 rm -f "$MANAGER_PATH" "$LINK_PATH"
@@ -229,12 +230,13 @@ show_menu() {
         PKTS_CNT=$(iptables -vnL SCANNERS-BLOCK 2>/dev/null | grep "LOG" | awk '{print $1}')
         [[ -z "$PKTS_CNT" ]] && PKTS_CNT="0"
         
-        echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║           🛡️  TRAFFICGUARD MANAGER                   ║${NC}"
-        echo -e "${CYAN}╠══════════════════════════════════════════════════════╣${NC}"
-        echo -e "║  📊 Подсетей:       ${GREEN}${IPSET_CNT}${NC}                             "
-        echo -e "║  🔥 Атак отбито:    ${RED}${PKTS_CNT}${NC}                             "
-        echo -e "${CYAN}╚══════════════════════════════════════════════════════╝${NC}"
+        echo -e "${CYAN}╔══════════════════════════════════════════════════════${NC}"
+        echo -e "${CYAN}║           🛡️  TRAFFICGUARD MANAGER                    ${NC}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════${NC}"
+        echo -e "║  📊 Подсетей:       ${GREEN}${IPSET_CNT}${NC}"
+        echo -e "║  🔥 Атак отбито:    ${RED}${PKTS_CNT}${NC}"
+        echo -e "║  💻 ${TFGMV}"
+        echo -e "${CYAN}╚══════════════════════════════════════════════════════${NC}"
         echo ""
         echo -e " ${GREEN}1.${NC} 📈 Топ атак (CSV)"
         echo -e " ${GREEN}2.${NC} 🕵 Логи IPv4 (Live)"
